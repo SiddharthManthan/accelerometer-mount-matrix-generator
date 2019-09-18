@@ -2,6 +2,8 @@
 
 import glob
 import os
+import sys
+import time
 
 """
 (according to Android emulator, seems to be inverse for iio)
@@ -13,16 +15,16 @@ lying flat (screen up): 0 0 9.81
 lying flat (screen down): 0 0 -9.81
 """
 
-POS_LOOKUP_TABLE = [
+NEG_LOOKUP_TABLE = [
     "right-up",
     "normal",
-    "screen-up"
+    "screen-down"
 ]
 
-NEG_LOOKUP_TABLE = [
+POS_LOOKUP_TABLE = [
     "left-up",
     "bottom-up",
-    "screen-down"
+    "screen-up"
 ]
 
 
@@ -30,11 +32,11 @@ def multiply_matrix(X, Y):
     result = [[0] * len(Y)] * len(X)
     # iterate through rows of X
     for i in range(len(X)):
-       # iterate through columns of Y
-       for j in range(len(Y[0])):
-           # iterate through rows of Y
-           for k in range(len(Y)):
-               result[i][j] += X[i][k] * Y[k][j]
+        # iterate through columns of Y
+        for j in range(len(Y[0])):
+            # iterate through rows of Y
+            for k in range(len(Y)):
+                result[i][j] += X[i][k] * Y[k][j]
     return result
 
 
@@ -46,6 +48,15 @@ def read_sysfs_int(path):
 def read_sysfs_float(path):
     with open(path) as handle:
         return float(handle.read().strip())
+
+
+def read_sysfs_mount_matrix(path):
+    with open(path) as handle:
+        matrix_str = handle.read().strip()
+        mount_matrix = []
+        for row in matrix_str.split("; "):
+            mount_matrix.append(list(map(int, row.split(", "))))
+        return mount_matrix
 
 
 def guess_sysfs_name(device):
@@ -68,10 +79,8 @@ def read_accel_from_device(device):
     x = x_raw * scale
     y = y_raw * scale
     z = z_raw * scale
-    status = x + y + z != 0
-    value = "{}, {}, {} g".format(round(x, 2), round(y, 2), round(z, 2))
-    print(value)
     return [x, y, z]
+
 
 def get_extreme_value_index(values):
     max_value = max(values)
@@ -83,58 +92,107 @@ def get_extreme_value_index(values):
         return (min_value, values.index(min_value))
 
 
-def do_stuff(rotation_matrix, accel_matrix, index):
+def fill_rotation_matrix(rotation_matrix, accel_matrix, should_be_index):
     extr_value, extr_index = get_extreme_value_index(accel_matrix)
     row = [0] * 3
     if extr_value > 0:
-        row[index] = -1
+        row[should_be_index] = -1
     else:
-        row[index] = 1
+        row[should_be_index] = 1
 
     rotation_matrix[extr_index] = row
     return rotation_matrix
 
 
+def generate_mount_matrix(device):
+    # Initialize a 3x3 matrix
+    rotation_matrix = [[0] * 3] * 3
+
+    print("Hold your device normal")
+    input("Press Enter to read...")
+    matrix_normal = read_accel_from_device(device)
+
+    print("Rotate your device to the left (so the right side is up)")
+    input("Press Enter to read...")
+    matrix_left = read_accel_from_device(device)
+
+    print("Put your device onto the table, so the screen points up")
+    input("Press Enter to read...")
+    matrix_up = read_accel_from_device(device)
+
+    rotation_matrix = fill_rotation_matrix(rotation_matrix, matrix_normal, 1)
+    rotation_matrix = fill_rotation_matrix(rotation_matrix, matrix_left, 0)
+    rotation_matrix = fill_rotation_matrix(rotation_matrix, matrix_up, 2)
+
+    # Verify that the matrix makes sense
+    for row in rotation_matrix:
+        if row.count(0) != 2 or row.count(1) != 1:
+            print("ERROR: The generated rotation matrix does not make any sense!")
+            break
+
+    print("Generated rotation matrix:")
+    for row in rotation_matrix:
+        print(row)
+
+
+def show_accel_values(device, print_raw=False, print_adjusted=False):
+    mount_matrix = read_sysfs_mount_matrix(os.path.join(device, 'mount_matrix'))
+    accel_matrix = read_accel_from_device(device)
+    if print_raw:
+        print("{}, {}, {} g".format(round(accel_matrix[0], 2), round(accel_matrix[1], 2), round(accel_matrix[2], 2)))
+    result_matrix = multiply_matrix([accel_matrix], mount_matrix)
+    if print_adjusted:
+        print("{}, {}, {} g".format(round(result_matrix[0][0], 2), round(result_matrix[0][1], 2), round(result_matrix[0][2], 2)))
+    value, index = get_extreme_value_index(result_matrix[0])
+    if value > 0:
+        direction = POS_LOOKUP_TABLE[index]
+    else:
+        direction = NEG_LOOKUP_TABLE[index]
+    return direction
+
+
+def monitor_accel_values(device, print_adjusted=False):
+    direction_old = ""
+    while True:
+        direction = show_accel_values(device, print_adjusted)
+        if direction_old != direction:
+            if not print_adjusted:
+                print("Orientation changed: " + direction)
+            direction_old = direction
+        time.sleep(0.1)
+
+
+def usage():
+    print("Usage: " + sys.argv[0] + " generate|show|show-raw|monitor|monitor-values")
+    sys.exit(1)
+
+
 def main():
+    if len(sys.argv) < 2:
+        usage()
+
     for device in glob.glob('/sys/bus/iio/devices/iio:device*'):
         if os.path.isfile(os.path.join(device, 'in_accel_x_raw')):
             model = guess_sysfs_name(device)
             print("Model: " + model)
 
-            # Initialize a 3x3 matrix
-            rotation_matrix = [[0] * 3] * 3
+            if sys.argv[1] == "generate":
+                generate_mount_matrix(device)
+            elif sys.argv[1] == "show":
+                print("Direction: " + show_accel_values(device, print_adjusted=True))
+            elif sys.argv[1] == "show-raw":
+                show_accel_values(device, print_raw=True)
+            elif sys.argv[1] == "monitor":
+                monitor_accel_values(device)
+            elif sys.argv[1] == "monitor-values":
+                monitor_accel_values(device, print_adjusted=True)
+            else:
+                usage()
 
-            print("Hold your device normal")
-            input("Press Enter to read...")
-            matrix_normal = read_accel_from_device(device)
+            return
 
-            print("Rotate your device to the left (so the right side is up)")
-            input("Press Enter to read...")
-            matrix_left = read_accel_from_device(device)
-
-            print("Put your device onto the table, so the screen points up")
-            input("Press Enter to read...")
-            matrix_up = read_accel_from_device(device)
-
-            rotation_matrix = do_stuff(rotation_matrix, matrix_normal, 1)
-            rotation_matrix = do_stuff(rotation_matrix, matrix_left, 0)
-            rotation_matrix = do_stuff(rotation_matrix, matrix_up, 2)
-
-
-            #result = multiply_matrix(matrix_a, rotation_matrix)
-#            for r in result:
-#                print(r)
-#                value, index = get_extreme_value_index(r)
-#                if value > 0:
-#                    direction = POS_LOOKUP_TABLE[index]
-#                else:
-#                    direction = NEG_LOOKUP_TABLE[index]
-#                print("Assumed direction: " + direction)
-
-            print("Generated rotation matrix:")
-            for row in rotation_matrix:
-                print(row)
-
+    print("No accelerometer found. Exiting.")
+    sys.exit(1)
 
 
 if __name__ == '__main__':
