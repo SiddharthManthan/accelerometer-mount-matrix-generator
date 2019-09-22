@@ -50,13 +50,19 @@ def read_sysfs_float(path):
         return float(handle.read().strip())
 
 
-def read_sysfs_mount_matrix(path):
-    with open(path) as handle:
-        matrix_str = handle.read().strip()
-        mount_matrix = []
-        for row in matrix_str.split("; "):
-            mount_matrix.append(list(map(int, row.split(", "))))
-        return mount_matrix
+def read_sysfs_mount_matrix(device):
+    for filename in ["mount_matrix", "in_accel_mount_matrix"]:
+        path = os.path.join(device, filename)
+        try:
+            with open(path) as handle:
+                matrix_str = handle.read().strip()
+                mount_matrix = []
+                for row in matrix_str.split("; "):
+                    mount_matrix.append(list(map(int, row.split(", "))))
+                return mount_matrix
+        except FileNotFoundError:
+            pass
+    raise RuntimeError("No mount matrix")
 
 
 def guess_sysfs_name(device):
@@ -136,11 +142,15 @@ def generate_mount_matrix(device):
 
 
 def show_accel_values(device, print_raw=False, print_adjusted=False):
-    mount_matrix = read_sysfs_mount_matrix(os.path.join(device, 'mount_matrix'))
     accel_matrix = read_accel_from_device(device)
     if print_raw:
         print("{}, {}, {} g".format(round(accel_matrix[0], 2), round(accel_matrix[1], 2), round(accel_matrix[2], 2)))
-    result_matrix = multiply_matrix([accel_matrix], mount_matrix)
+    try:
+        mount_matrix = read_sysfs_mount_matrix(device)
+        result_matrix = multiply_matrix([accel_matrix], mount_matrix)
+    except RuntimeError:
+        # mount-matrix not found, ignore
+        result_matrix = [accel_matrix]
     if print_adjusted:
         print("{}, {}, {} g".format(round(result_matrix[0][0], 2), round(result_matrix[0][1], 2), round(result_matrix[0][2], 2)))
     value, index = get_extreme_value_index(result_matrix[0])
