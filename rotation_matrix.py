@@ -18,13 +18,13 @@ lying flat (screen down): 0 0 -9.81
 NEG_LOOKUP_TABLE = [
     "right-up",
     "normal",
-    "screen-down"
+    "screen-up"
 ]
 
 POS_LOOKUP_TABLE = [
     "left-up",
     "bottom-up",
-    "screen-up"
+    "screen-down"
 ]
 
 
@@ -114,7 +114,7 @@ def generate_mount_matrix(device):
     # Initialize a 3x3 matrix
     rotation_matrix = [[0] * 3] * 3
 
-    print("Hold your device normal")
+    print("Hold your device normal (upright, so the device is vertical)")
     input("Press Enter to read...")
     matrix_normal = read_accel_from_device(device)
 
@@ -132,7 +132,8 @@ def generate_mount_matrix(device):
 
     # Verify that the matrix makes sense
     for row in rotation_matrix:
-        if row.count(0) != 2 or row.count(1) != 1:
+        # Each row must contain two 0 and one 1 or -1
+        if not (row.count(0) == 2 and (row.count(1) == 1 or row.count(-1) == 1)):
             print("ERROR: The generated rotation matrix does not make any sense!")
             break
 
