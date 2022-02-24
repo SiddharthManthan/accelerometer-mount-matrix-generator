@@ -81,10 +81,17 @@ def read_accel_from_device(device):
     x_raw = read_sysfs_int(os.path.join(device, 'in_accel_x_raw'))
     y_raw = read_sysfs_int(os.path.join(device, 'in_accel_y_raw'))
     z_raw = read_sysfs_int(os.path.join(device, 'in_accel_z_raw'))
-    scale = read_sysfs_float(os.path.join(device, 'in_accel_scale'))
-    x = x_raw * scale
-    y = y_raw * scale
-    z = z_raw * scale
+    scale=[None] * 3
+    if os.path.exists(os.path.join(device, 'in_accel_scale')):
+        scale_input = read_sysfs_float(os.path.join(device, 'in_accel_scale'))
+        scale.extend([scale_input] * 3)
+    else:
+        scale[0]=read_sysfs_float(os.path.join(device, 'in_accel_x_scale'))
+        scale[1]=read_sysfs_float(os.path.join(device, 'in_accel_y_scale'))
+        scale[2]=read_sysfs_float(os.path.join(device, 'in_accel_z_scale'))
+    x = x_raw * scale[0]
+    y = y_raw * scale[1]
+    z = z_raw * scale[2]
     return [x, y, z]
 
 
